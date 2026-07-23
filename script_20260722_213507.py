@@ -24,11 +24,6 @@ DAPI_CHANNEL = 0
 TUBULIN_CHANNEL = 1
 Z_SLICE = 0  # Use first z-slice only
 
-# ndimage.generic_filter with a Python callback (np.var) is extremely slow over a full
-# image (~minutes per file). Skip it for now to get a full run done; revisit with a
-# faster local-variance implementation (e.g. uniform_filter-based) if this feature is needed.
-COMPUTE_TEXTURE_VAR = False
-
 # Create output folders
 OUTPUT_FOLDER.mkdir(exist_ok=True)
 QC_FOLDER.mkdir(exist_ok=True)
@@ -77,7 +72,8 @@ def load_image_channels(image_path):
 def segment_nuclei(dapi_image, median_filter_size=2):
     """Segment nuclei from DAPI channel using triangle thresholding and morphological operations."""
     # Median filter to denoise while preserving edges
-    dapi_filtered = ndimage.median_filter(dapi_image, size=median_filter_size)
+    footprint = np.ones((median_filter_size, median_filter_size), dtype=bool)
+    dapi_filtered = filters.median(dapi_image, footprint=footprint)
 
     # Apply triangle threshold
     threshold = filters.threshold_li(dapi_filtered)
@@ -96,7 +92,7 @@ def segment_nuclei(dapi_image, median_filter_size=2):
 def segment_cells(nuclei_labels, tubulin_image, gaussian_sigma=2):
     """Segment cell boundaries using seeded watershed from nuclei."""
     # Gaussian smoothing to denoise while preserving cell-scale structure
-    tubulin_smoothed = ndimage.gaussian_filter(tubulin_image, sigma=gaussian_sigma)
+    tubulin_smoothed = filters.gaussian(tubulin_image, sigma=gaussian_sigma, preserve_range=True)
 
     # Apply triangle threshold to obtain foreground mask
     threshold = filters.threshold_triangle(tubulin_smoothed)
@@ -122,8 +118,8 @@ def save_segmentation_qc(image_path, nuclei_labels, cell_labels):
 
     print(f"    Saved label images: {nuclei_path.name}, {cell_path.name}")
 
-def extract_morphological_features(cell_mask, dapi_image, tubulin_image, tubulin_local_var,
-                                    tubulin_laplacian, cell_label, debug=False):
+def extract_morphological_features(cell_mask, dapi_image, tubulin_image, tubulin_laplacian,
+                                    cell_label, debug=False):
     """Extract morphological and intensity features from a single cell."""
     t_start = time.perf_counter()
     features_dict = {}
@@ -159,10 +155,7 @@ def extract_morphological_features(cell_mask, dapi_image, tubulin_image, tubulin
     features_dict['tubulin_min'] = np.min(tubulin_values)
     t2 = time.perf_counter()
 
-    # Tubulin texture features (local variance as organization metric) and
-    # granularity (Laplacian) - both precomputed once per image by the caller
-    if tubulin_local_var is not None:
-        features_dict['tubulin_texture_var'] = np.mean(tubulin_local_var[cell_region])
+    # Granularity (Laplacian) - precomputed once per image by the caller
     features_dict['tubulin_granularity'] = np.mean(np.abs(tubulin_laplacian[cell_region]))
     t3 = time.perf_counter()
 
@@ -203,15 +196,10 @@ def process_single_image(image_path):
     cell_labels = segment_cells(nuclei_labels, tubulin)
     save_segmentation_qc(image_path, nuclei_labels, cell_labels)
 
-    # Precompute whole-image texture maps once (previously recomputed per cell)
+    # Precompute whole-image granularity map once (previously recomputed per cell)
     t0 = time.perf_counter()
-    if COMPUTE_TEXTURE_VAR:
-        tubulin_local_var = ndimage.generic_filter(tubulin, np.var, size=5)
-    else:
-        tubulin_local_var = None
-    tubulin_laplacian = ndimage.laplace(tubulin)
-    print(f"    Precomputed texture maps in {time.perf_counter() - t0:.2f}s"
-          f"{' (texture_var skipped)' if not COMPUTE_TEXTURE_VAR else ''}")
+    tubulin_laplacian = filters.laplace(tubulin)
+    print(f"    Precomputed granularity map in {time.perf_counter() - t0:.2f}s")
 
     # Extract features for each cell
     cell_features_list = []
@@ -226,7 +214,7 @@ def process_single_image(image_path):
             continue
 
         cell_features = extract_morphological_features(
-            cell_labels, dapi, tubulin, tubulin_local_var, tubulin_laplacian,
+            cell_labels, dapi, tubulin, tubulin_laplacian,
             cell_label, debug=(cell_label == first_label)
         )
         if cell_features is not None:
