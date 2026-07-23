@@ -11,6 +11,7 @@ from sklearn.model_selection import cross_val_score
 from sklearn.preprocessing import StandardScaler
 import matplotlib.pyplot as plt
 from tqdm import tqdm
+import time
 import warnings
 warnings.filterwarnings('ignore')
 
@@ -116,55 +117,69 @@ def save_segmentation_qc(image_path, nuclei_labels, cell_labels):
 
     print(f"    Saved label images: {nuclei_path.name}, {cell_path.name}")
 
-def extract_morphological_features(cell_mask, dapi_image, tubulin_image, cell_label):
+def extract_morphological_features(cell_mask, dapi_image, tubulin_image, cell_label, debug=False):
     """Extract morphological and intensity features from a single cell."""
+    t_start = time.perf_counter()
     features_dict = {}
-    
+
     # Get cell region
     cell_region = cell_mask == cell_label
-    
+
     if np.sum(cell_region) < 10:  # Skip very small cells
         return None
-    
+
     # Shape and size features
+    t0 = time.perf_counter()
     region_props = measure.regionprops(cell_region.astype(int))[0]
     features_dict['area'] = region_props.area
     features_dict['perimeter'] = region_props.perimeter
     features_dict['eccentricity'] = region_props.eccentricity
     features_dict['solidity'] = region_props.solidity
     features_dict['aspect_ratio'] = region_props.major_axis_length / (region_props.minor_axis_length + 1e-8)
-    
+    t1 = time.perf_counter()
+
     # DAPI intensity features
     dapi_values = dapi_image[cell_region]
     features_dict['dapi_mean'] = np.mean(dapi_values)
     features_dict['dapi_std'] = np.std(dapi_values)
     features_dict['dapi_max'] = np.max(dapi_values)
     features_dict['dapi_min'] = np.min(dapi_values)
-    
+
     # Tubulin intensity features
     tubulin_values = tubulin_image[cell_region]
     features_dict['tubulin_mean'] = np.mean(tubulin_values)
     features_dict['tubulin_std'] = np.std(tubulin_values)
     features_dict['tubulin_max'] = np.max(tubulin_values)
     features_dict['tubulin_min'] = np.min(tubulin_values)
-    
+    t2 = time.perf_counter()
+
     # Tubulin texture features (local variance as organization metric)
     tubulin_local_var = ndimage.generic_filter(tubulin_image, np.var, size=5)
     features_dict['tubulin_texture_var'] = np.mean(tubulin_local_var[cell_region])
-    
+    t3 = time.perf_counter()
+
     # Granularity (using Laplacian)
     tubulin_laplacian = ndimage.laplace(tubulin_image)
     features_dict['tubulin_granularity'] = np.mean(np.abs(tubulin_laplacian[cell_region]))
-    
+    t4 = time.perf_counter()
+
     # Intensity ratio and colocalization
     features_dict['tubulin_dapi_ratio'] = (features_dict['tubulin_mean'] / (features_dict['dapi_mean'] + 1e-8))
     dapi_tubulin_correlation = np.corrcoef(dapi_values, tubulin_values)[0, 1]
     features_dict['dapi_tubulin_correlation'] = dapi_tubulin_correlation if not np.isnan(dapi_tubulin_correlation) else 0
-    
+
     # Spatial intensity distribution (coefficient of variation)
     features_dict['dapi_cv'] = features_dict['dapi_std'] / (features_dict['dapi_mean'] + 1e-8)
     features_dict['tubulin_cv'] = features_dict['tubulin_std'] / (features_dict['tubulin_mean'] + 1e-8)
-    
+    t5 = time.perf_counter()
+
+    if debug:
+        tqdm.write(
+            f"    [debug cell {cell_label}] shape={t1 - t0:.3f}s intensity={t2 - t1:.3f}s "
+            f"texture_var(generic_filter)={t3 - t2:.3f}s laplacian={t4 - t3:.3f}s "
+            f"ratios={t5 - t4:.3f}s total={t5 - t_start:.3f}s"
+        )
+
     return features_dict
 
 def process_single_image(image_path):
@@ -191,11 +206,16 @@ def process_single_image(image_path):
     unique_labels = np.unique(cell_labels)
     skipped = 0
 
+    non_bg_labels = unique_labels[unique_labels != 0]
+    first_label = non_bg_labels[0] if len(non_bg_labels) else None
+
     for cell_label in tqdm(unique_labels, desc=f"  Extracting features ({image_path.name})", unit="cell"):
         if cell_label == 0:  # Skip background
             continue
 
-        cell_features = extract_morphological_features(cell_labels, dapi, tubulin, cell_label)
+        cell_features = extract_morphological_features(
+            cell_labels, dapi, tubulin, cell_label, debug=(cell_label == first_label)
+        )
         if cell_features is not None:
             cell_features['condition'] = condition
             cell_features['image_file'] = image_path.name
