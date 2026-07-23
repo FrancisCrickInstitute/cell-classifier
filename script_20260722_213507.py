@@ -2,8 +2,7 @@ import numpy as np
 import pandas as pd
 from pathlib import Path
 from bioio import BioImage
-from scipy import ndimage
-from scipy.ndimage import label
+from scipy.ndimage import distance_transform_edt
 from skimage import morphology, feature, measure, filters, io
 from skimage.segmentation import watershed
 from sklearn.ensemble import RandomForestClassifier
@@ -78,10 +77,10 @@ def segment_nuclei(dapi_image, median_filter_size=2):
 
     # Remove small objects and fill holes
     binary = morphology.remove_small_objects(binary, min_size=10)
-    #binary = ndimage.binary_fill_holes(binary)
+    #binary = morphology.remove_small_holes(binary, max_size=binary.size)
 
     # Label connected components
-    nuclei_labels, num_nuclei = label(binary)
+    nuclei_labels, num_nuclei = measure.label(binary, connectivity=1, return_num=True)
     print(f"    Found {num_nuclei} nuclei (triangle threshold={threshold:.1f})")
 
     return nuclei_labels
@@ -96,7 +95,7 @@ def segment_cells(nuclei_labels, tubulin_image, gaussian_sigma=2):
     mask = tubulin_smoothed > threshold
 
     # Create distance map for watershed
-    distance = ndimage.distance_transform_edt(mask)
+    distance = distance_transform_edt(mask)
 
     # Apply watershed seeded by nuclei
     cell_labels = watershed(-distance, markers=nuclei_labels, mask=mask)
