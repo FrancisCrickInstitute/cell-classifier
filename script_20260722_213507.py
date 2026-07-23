@@ -250,5 +250,27 @@ def main():
     
     # Train final model on all data
     clf.fit(X_scaled, y)
-    
+
     # Get feature importance
+    importance_df = pd.DataFrame({
+        'feature': feature_columns,
+        'importance': clf.feature_importances_
+    }).sort_values('importance', ascending=False)
+
+    print("\nFeature importances:")
+    print(importance_df.to_string(index=False))
+    importance_df.to_csv(OUTPUT_FOLDER / 'feature_importance.csv', index=False)
+
+    # Plot feature importance
+    plt.figure(figsize=(8, 6))
+    plt.barh(importance_df['feature'], importance_df['importance'])
+    plt.xlabel('Importance')
+    plt.title('Feature Importance (Random Forest)')
+    plt.gca().invert_yaxis()
+    plt.tight_layout()
+    plt.savefig(OUTPUT_FOLDER / 'feature_importance.png')
+    print(f"\nFeature importance plot saved to {OUTPUT_FOLDER / 'feature_importance.png'}")
+
+
+if __name__ == '__main__':
+    main()
