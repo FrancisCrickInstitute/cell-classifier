@@ -6,6 +6,7 @@ from scipy import ndimage
 from scipy.ndimage import label
 from skimage import morphology, feature, measure
 from skimage.segmentation import watershed
+from skimage.color import label2rgb
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.model_selection import cross_val_score
 from sklearn.preprocessing import StandardScaler
@@ -16,14 +17,15 @@ warnings.filterwarnings('ignore')
 # Configuration parameters
 INPUT_FOLDER = Path('C:/Users/davej/Downloads/wetransfer_example-images_2026-07-21_1330/Images for Dave')  # Folder containing CZI files
 OUTPUT_FOLDER = Path('./results')
-OUTPUT_FOLDER.mkdir(exist_ok=True)
+QC_FOLDER = OUTPUT_FOLDER / 'segmentation_qc'
 
 DAPI_CHANNEL = 0
 TUBULIN_CHANNEL = 1
 Z_SLICE = 0  # Use first z-slice only
 
-# Create output folder
+# Create output folders
 OUTPUT_FOLDER.mkdir(exist_ok=True)
+QC_FOLDER.mkdir(exist_ok=True)
 
 def extract_condition_from_filename(filename):
     """Extract condition (doxneg or doxpos) from filename."""
@@ -100,6 +102,36 @@ def segment_cells(nuclei_labels, tubulin_image):
 
     return cell_labels
 
+def save_segmentation_qc(image_path, dapi_image, tubulin_image, nuclei_labels, cell_labels):
+    """Save a PNG showing raw channels and label overlays for visual QC."""
+    num_nuclei = nuclei_labels.max()
+    num_cells = len(np.unique(cell_labels)) - (1 if 0 in cell_labels else 0)
+
+    fig, axes = plt.subplots(1, 4, figsize=(20, 5))
+
+    axes[0].imshow(dapi_image, cmap='gray')
+    axes[0].set_title('DAPI')
+
+    axes[1].imshow(label2rgb(nuclei_labels, image=dapi_image, bg_label=0))
+    axes[1].set_title(f'Nuclei labels ({num_nuclei})')
+
+    axes[2].imshow(tubulin_image, cmap='gray')
+    axes[2].set_title('Tubulin')
+
+    axes[3].imshow(label2rgb(cell_labels, image=tubulin_image, bg_label=0))
+    axes[3].set_title(f'Cell labels ({num_cells})')
+
+    for ax in axes:
+        ax.axis('off')
+
+    fig.suptitle(image_path.name)
+    plt.tight_layout()
+
+    out_path = QC_FOLDER / f'{image_path.stem}_segmentation.png'
+    plt.savefig(out_path, dpi=150)
+    plt.close(fig)
+    print(f"    Segmentation QC image saved to {out_path}")
+
 def extract_morphological_features(cell_mask, dapi_image, tubulin_image, cell_label):
     """Extract morphological and intensity features from a single cell."""
     features_dict = {}
@@ -168,6 +200,7 @@ def process_single_image(image_path):
     # Segment nuclei and cells
     nuclei_labels = segment_nuclei(dapi)
     cell_labels = segment_cells(nuclei_labels, tubulin)
+    save_segmentation_qc(image_path, dapi, tubulin, nuclei_labels, cell_labels)
 
     # Extract features for each cell
     cell_features_list = []
