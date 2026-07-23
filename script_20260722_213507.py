@@ -13,7 +13,7 @@ from skimage import morphology, measure, filters, io
 from skimage.segmentation import watershed
 from sklearn.base import clone
 from sklearn.ensemble import RandomForestClassifier
-from sklearn.model_selection import LeaveOneGroupOut
+from sklearn.model_selection import LeaveOneGroupOut, cross_val_score
 from sklearn.preprocessing import StandardScaler
 from tqdm import tqdm
 
@@ -285,6 +285,24 @@ def process_single_image(image_path, nuclei_channel, cells_channel, z_slice, qc_
         return None
 
 
+def run_image_identity_diagnostic(X_scaled, image_labels):
+    """Sanity check: how well can a classifier predict which image a cell came from?
+
+    Evaluated with an ordinary cell-level stratified K-fold rather than leave-one-image-out,
+    since holding out a whole image would remove all training examples of the label being
+    predicted. High accuracy here means the feature space is dominated by per-image technical
+    signatures (illumination, staining batch, segmentation thresholds) rather than biological
+    signal, which would explain poor leave-one-image-out generalization for the condition
+    classifier.
+    """
+    print("\nRunning image-identity diagnostic classifier...")
+    n_images = len(np.unique(image_labels))
+    clf = RandomForestClassifier(n_estimators=100, random_state=42, max_depth=10, min_samples_split=5)
+    cv_scores = cross_val_score(clf, X_scaled, image_labels, cv=5, scoring='accuracy')
+    print(f"Image-identity accuracy: {cv_scores.mean():.3f} (+/- {cv_scores.std():.3f}) "
+          f"[chance level for {n_images} images: {1 / n_images:.3f}]")
+
+
 def main():
     """Main analysis pipeline."""
     args = parse_args()
@@ -354,6 +372,10 @@ def main():
     # Standardize features
     scaler = StandardScaler()
     X_scaled = scaler.fit_transform(X)
+
+    # Diagnostic: how well do these features separate cells by *which image* they came from,
+    # independent of condition? High accuracy here points to per-image batch effects.
+    run_image_identity_diagnostic(X_scaled, features_df['image_file'].values)
 
     # Train Random Forest classifier with leave-one-image-out cross-validation. Cells from the
     # same image share illumination/staining batch effects and are not independent samples, so a
