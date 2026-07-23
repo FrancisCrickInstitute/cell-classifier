@@ -11,8 +11,9 @@ import pandas as pd
 from bioio import BioImage
 from skimage import morphology, measure, filters, io
 from skimage.segmentation import watershed
+from sklearn.base import clone
 from sklearn.ensemble import RandomForestClassifier
-from sklearn.model_selection import cross_val_score
+from sklearn.model_selection import LeaveOneGroupOut
 from sklearn.preprocessing import StandardScaler
 from tqdm import tqdm
 
@@ -354,10 +355,22 @@ def main():
     scaler = StandardScaler()
     X_scaled = scaler.fit_transform(X)
 
-    # Train Random Forest classifier with cross-validation
-    print("\nTraining Random Forest classifier...")
+    # Train Random Forest classifier with leave-one-image-out cross-validation. Cells from the
+    # same image share illumination/staining batch effects and are not independent samples, so a
+    # plain cell-level K-fold split would leak cells from every image into every fold and inflate
+    # accuracy; grouping by image_file ensures each held-out fold is an entirely unseen image.
+    print("\nTraining Random Forest classifier (leave-one-image-out cross-validation)...")
     clf = RandomForestClassifier(n_estimators=100, random_state=42, max_depth=10, min_samples_split=5)
-    cv_scores = cross_val_score(clf, X_scaled, y, cv=5, scoring='accuracy')
+    groups = features_df['image_file'].values
+    cv_scores = []
+    for train_idx, test_idx in LeaveOneGroupOut().split(X_scaled, y, groups):
+        held_out_image = groups[test_idx][0]
+        fold_clf = clone(clf)
+        fold_clf.fit(X_scaled[train_idx], y[train_idx])
+        fold_accuracy = fold_clf.score(X_scaled[test_idx], y[test_idx])
+        cv_scores.append(fold_accuracy)
+        print(f"  Held out {held_out_image}: accuracy={fold_accuracy:.3f} ({len(test_idx)} cells)")
+    cv_scores = np.array(cv_scores)
 
     print(f"Cross-validation accuracy: {cv_scores.mean():.3f} (+/- {cv_scores.std():.3f})")
 
