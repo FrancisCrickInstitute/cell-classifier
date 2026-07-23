@@ -44,10 +44,9 @@ The script runs a linear pipeline over a folder of `.czi` files:
    warning.
 2. **Channel loading** (`load_image_channels`) — uses `bioio.BioImage` to load a file, then indexes
    into the DAPI and tubulin channels (`DAPI_CHANNEL = 0`, `TUBULIN_CHANNEL = 1`) at a single
-   z-slice (`Z_SLICE = 0`). Handles TCZYX, CZYX, and ZYX dimension orderings from `img.data`. Note:
-   the ZYX (3D, single-channel-already-indexed) branch currently reads both DAPI and tubulin from
-   the same `img.get_image_data('ZYX')` call, so it does not actually separate channels — this path
-   is only correct if real inputs never hit it (expected CZI inputs are 4D/5D).
+   z-slice (`Z_SLICE = 0`). Handles TCZYX and CZYX dimension orderings from `img.data`; any other
+   dimensionality (e.g. a bare ZYX single-channel image) is unsupported and logged/skipped rather
+   than guessed at.
 3. **Nuclei segmentation** (`segment_nuclei`) — median filter denoise, Li's threshold
    (`filters.threshold_li`) on the DAPI channel (the log message calls this "triangle threshold",
    which is a naming leftover, not the actual method), small-object removal, connected-component
