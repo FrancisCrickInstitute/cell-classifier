@@ -157,7 +157,11 @@ def save_segmentation_qc(image_path, nuclei_labels, cell_labels, qc_folder):
 
 def extract_morphological_features(cell_mask, nuclei_image, cells_image, cells_laplacian,
                                    cell_label, debug=False):
-    """Extract morphological and intensity features from a single cell."""
+    """Extract morphological and intensity features from a single cell.
+
+    Intensity-based features are computed after normalizing both channels to this cell's own
+    mean nuclei-channel intensity (see `nuclei_reference` below).
+    """
     t_start = time.perf_counter()
     features_dict = {}
 
@@ -177,23 +181,30 @@ def extract_morphological_features(cell_mask, nuclei_image, cells_image, cells_l
     features_dict['aspect_ratio'] = region_props.major_axis_length / (region_props.minor_axis_length + 1e-8)
     t1 = time.perf_counter()
 
+    # Normalize both channels to this cell's own mean nuclei-channel (DAPI) intensity, so
+    # per-cell/per-image illumination and staining-intensity differences cancel out before any
+    # intensity feature is computed
+    nuclei_reference = np.mean(nuclei_image[cell_region]) + 1e-8
+    nuclei_values = nuclei_image[cell_region] / nuclei_reference
+    cells_values = cells_image[cell_region] / nuclei_reference
+
     # Nuclei intensity features
-    nuclei_values = nuclei_image[cell_region]
     features_dict['nuclei_mean'] = np.mean(nuclei_values)
     features_dict['nuclei_std'] = np.std(nuclei_values)
     features_dict['nuclei_max'] = np.max(nuclei_values)
     features_dict['nuclei_min'] = np.min(nuclei_values)
 
     # Cells intensity features
-    cells_values = cells_image[cell_region]
     features_dict['cells_mean'] = np.mean(cells_values)
     features_dict['cells_std'] = np.std(cells_values)
     features_dict['cells_max'] = np.max(cells_values)
     features_dict['cells_min'] = np.min(cells_values)
     t2 = time.perf_counter()
 
-    # Granularity (Laplacian) - precomputed once per image by the caller
-    features_dict['cells_granularity'] = np.mean(np.abs(cells_laplacian[cell_region]))
+    # Granularity (Laplacian) - precomputed once per image (on raw intensities) by the caller;
+    # scale the per-cell texture magnitude by the same reference used above so it isn't
+    # confounded by per-cell brightness
+    features_dict['cells_granularity'] = np.mean(np.abs(cells_laplacian[cell_region])) / nuclei_reference
     t3 = time.perf_counter()
 
     # Intensity ratio and colocalization
