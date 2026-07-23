@@ -24,6 +24,11 @@ DAPI_CHANNEL = 0
 TUBULIN_CHANNEL = 1
 Z_SLICE = 0  # Use first z-slice only
 
+# ndimage.generic_filter with a Python callback (np.var) is extremely slow over a full
+# image (~minutes per file). Skip it for now to get a full run done; revisit with a
+# faster local-variance implementation (e.g. uniform_filter-based) if this feature is needed.
+COMPUTE_TEXTURE_VAR = False
+
 # Create output folders
 OUTPUT_FOLDER.mkdir(exist_ok=True)
 QC_FOLDER.mkdir(exist_ok=True)
@@ -156,7 +161,8 @@ def extract_morphological_features(cell_mask, dapi_image, tubulin_image, tubulin
 
     # Tubulin texture features (local variance as organization metric) and
     # granularity (Laplacian) - both precomputed once per image by the caller
-    features_dict['tubulin_texture_var'] = np.mean(tubulin_local_var[cell_region])
+    if tubulin_local_var is not None:
+        features_dict['tubulin_texture_var'] = np.mean(tubulin_local_var[cell_region])
     features_dict['tubulin_granularity'] = np.mean(np.abs(tubulin_laplacian[cell_region]))
     t3 = time.perf_counter()
 
@@ -199,9 +205,13 @@ def process_single_image(image_path):
 
     # Precompute whole-image texture maps once (previously recomputed per cell)
     t0 = time.perf_counter()
-    tubulin_local_var = ndimage.generic_filter(tubulin, np.var, size=5)
+    if COMPUTE_TEXTURE_VAR:
+        tubulin_local_var = ndimage.generic_filter(tubulin, np.var, size=5)
+    else:
+        tubulin_local_var = None
     tubulin_laplacian = ndimage.laplace(tubulin)
-    print(f"    Precomputed texture maps in {time.perf_counter() - t0:.2f}s")
+    print(f"    Precomputed texture maps in {time.perf_counter() - t0:.2f}s"
+          f"{' (texture_var skipped)' if not COMPUTE_TEXTURE_VAR else ''}")
 
     # Extract features for each cell
     cell_features_list = []
