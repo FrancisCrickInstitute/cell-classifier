@@ -1,3 +1,4 @@
+import argparse
 import time
 import warnings
 from pathlib import Path
@@ -15,19 +16,43 @@ from tqdm import tqdm
 
 warnings.filterwarnings('ignore')
 
-# Configuration parameters
-INPUT_FOLDER = Path(
-    'C:/Users/davej/Downloads/wetransfer_example-images_2026-07-21_1330/Images for Dave')  # Folder containing CZI files
-OUTPUT_FOLDER = Path('./results')
-QC_FOLDER = OUTPUT_FOLDER / 'segmentation_qc'
 
-NUCLEI_CHANNEL = 0
-CELLS_CHANNEL = 1
-Z_SLICE = 0  # Use first z-slice only
+def parse_args():
+    """Parse command-line configuration for the pipeline."""
+    parser = argparse.ArgumentParser(
+        description='Cytoskeletal organization classifier: segments cells from CZI images, '
+                    'extracts per-cell features, and trains a doxpos/doxneg classifier.'
+    )
+    parser.add_argument(
+        '--input-folder', type=Path,
+        default=Path('C:/Users/davej/Downloads/wetransfer_example-images_2026-07-21_1330/Images for Dave'),
+        help='Folder containing CZI files (default: %(default)s)'
+    )
+    parser.add_argument(
+        '--output-folder', type=Path, default=Path('./results'),
+        help='Folder to write results to (default: %(default)s)'
+    )
+    parser.add_argument(
+        '--qc-folder', type=Path, default=None,
+        help='Folder to write segmentation QC images to (default: <output-folder>/segmentation_qc)'
+    )
+    parser.add_argument(
+        '--nuclei-channel', type=int, default=0,
+        help='Channel index of the nuclei stain (default: %(default)s)'
+    )
+    parser.add_argument(
+        '--cells-channel', type=int, default=1,
+        help='Channel index of the cells stain (default: %(default)s)'
+    )
+    parser.add_argument(
+        '--z-slice', type=int, default=0,
+        help='Z-slice index to use (default: %(default)s)'
+    )
 
-# Create output folders
-OUTPUT_FOLDER.mkdir(exist_ok=True)
-QC_FOLDER.mkdir(exist_ok=True)
+    args = parser.parse_args()
+    if args.qc_folder is None:
+        args.qc_folder = args.output_folder / 'segmentation_qc'
+    return args
 
 
 def extract_condition_from_filename(filename):
@@ -41,7 +66,7 @@ def extract_condition_from_filename(filename):
         return None
 
 
-def load_image_channels(image_path):
+def load_image_channels(image_path, nuclei_channel, cells_channel, z_slice):
     """Load CZI image and extract nuclei and cells channels from first z-slice."""
     try:
         img = BioImage(str(image_path))
@@ -53,11 +78,11 @@ def load_image_channels(image_path):
 
         # Handle different possible dimension orders
         if len(data.shape) == 5:  # TCZYX
-            nuclei = data[0, NUCLEI_CHANNEL, Z_SLICE, :, :].astype(np.float32)
-            cells = data[0, CELLS_CHANNEL, Z_SLICE, :, :].astype(np.float32)
+            nuclei = data[0, nuclei_channel, z_slice, :, :].astype(np.float32)
+            cells = data[0, cells_channel, z_slice, :, :].astype(np.float32)
         elif len(data.shape) == 4:  # CZYX
-            nuclei = data[NUCLEI_CHANNEL, Z_SLICE, :, :].astype(np.float32)
-            cells = data[CELLS_CHANNEL, Z_SLICE, :, :].astype(np.float32)
+            nuclei = data[nuclei_channel, z_slice, :, :].astype(np.float32)
+            cells = data[cells_channel, z_slice, :, :].astype(np.float32)
         else:
             print(f"    Unsupported dimensionality: {len(data.shape)}D")
             return None, None
@@ -113,10 +138,10 @@ def segment_cells(nuclei_labels, cells_image, gaussian_sigma=2):
     return cell_labels
 
 
-def save_segmentation_qc(image_path, nuclei_labels, cell_labels):
+def save_segmentation_qc(image_path, nuclei_labels, cell_labels, qc_folder):
     """Save raw nuclei and cell label images as PNGs for visual QC."""
-    nuclei_path = QC_FOLDER / f'{image_path.stem}_nuclei_labels.png'
-    cell_path = QC_FOLDER / f'{image_path.stem}_cell_labels.png'
+    nuclei_path = qc_folder / f'{image_path.stem}_nuclei_labels.png'
+    cell_path = qc_folder / f'{image_path.stem}_cell_labels.png'
 
     io.imsave(nuclei_path, nuclei_labels.astype(np.uint16), check_contrast=False)
     io.imsave(cell_path, cell_labels.astype(np.uint16), check_contrast=False)
@@ -185,7 +210,7 @@ def extract_morphological_features(cell_mask, nuclei_image, cells_image, cells_l
     return features_dict
 
 
-def process_single_image(image_path):
+def process_single_image(image_path, nuclei_channel, cells_channel, z_slice, qc_folder):
     """Process a single CZI image and extract features for all cells."""
     condition = extract_condition_from_filename(image_path.name)
     if condition is None:
@@ -194,7 +219,7 @@ def process_single_image(image_path):
     print(f"  Condition: {condition}")
 
     # Load channels
-    nuclei, cells = load_image_channels(image_path)
+    nuclei, cells = load_image_channels(image_path, nuclei_channel, cells_channel, z_slice)
     if nuclei is None or cells is None:
         print(f"Warning: Failed to load image {image_path.name}")
         return None
@@ -202,7 +227,7 @@ def process_single_image(image_path):
     # Segment nuclei and cells
     nuclei_labels = segment_nuclei(nuclei)
     cell_labels = segment_cells(nuclei_labels, cells)
-    save_segmentation_qc(image_path, nuclei_labels, cell_labels)
+    save_segmentation_qc(image_path, nuclei_labels, cell_labels, qc_folder)
 
     # Precompute whole-image granularity map once (previously recomputed per cell)
     t0 = time.perf_counter()
@@ -242,14 +267,18 @@ def process_single_image(image_path):
 
 def main():
     """Main analysis pipeline."""
+    args = parse_args()
+    args.output_folder.mkdir(exist_ok=True)
+    args.qc_folder.mkdir(exist_ok=True)
+
     print("Starting cytoskeletal organization classifier analysis...")
-    print(f"Input folder: {INPUT_FOLDER.resolve()}")
-    print(f"Output folder: {OUTPUT_FOLDER.resolve()}")
+    print(f"Input folder: {args.input_folder.resolve()}")
+    print(f"Output folder: {args.output_folder.resolve()}")
 
     # Find all CZI files
-    czi_files = list(INPUT_FOLDER.glob('*.czi'))
+    czi_files = list(args.input_folder.glob('*.czi'))
     if not czi_files:
-        print(f"No CZI files found in {INPUT_FOLDER}")
+        print(f"No CZI files found in {args.input_folder}")
         return
 
     print(f"Found {len(czi_files)} CZI files")
@@ -258,7 +287,9 @@ def main():
     all_features = []
     for image_path in czi_files:
         print(f"Processing {image_path.name}...")
-        image_features = process_single_image(image_path)
+        image_features = process_single_image(
+            image_path, args.nuclei_channel, args.cells_channel, args.z_slice, args.qc_folder
+        )
         if image_features is not None:
             all_features.append(image_features)
             print(f"  Extracted features from {len(image_features)} cells")
@@ -273,8 +304,8 @@ def main():
     print(f"Condition distribution:\n{features_df['condition'].value_counts()}")
 
     # Save raw features
-    features_df.to_csv(OUTPUT_FOLDER / 'cell_features.csv', index=False)
-    print(f"\nRaw features saved to {OUTPUT_FOLDER / 'cell_features.csv'}")
+    features_df.to_csv(args.output_folder / 'cell_features.csv', index=False)
+    print(f"\nRaw features saved to {args.output_folder / 'cell_features.csv'}")
 
     # Prepare data for classification
     feature_columns = [col for col in features_df.columns if col not in ['condition', 'image_file']]
@@ -306,7 +337,7 @@ def main():
 
     print("\nFeature importances:")
     print(importance_df.to_string(index=False))
-    importance_df.to_csv(OUTPUT_FOLDER / 'feature_importance.csv', index=False)
+    importance_df.to_csv(args.output_folder / 'feature_importance.csv', index=False)
 
     # Plot feature importance
     plt.figure(figsize=(8, 6))
@@ -315,8 +346,8 @@ def main():
     plt.title('Feature Importance (Random Forest)')
     plt.gca().invert_yaxis()
     plt.tight_layout()
-    plt.savefig(OUTPUT_FOLDER / 'feature_importance.png')
-    print(f"\nFeature importance plot saved to {OUTPUT_FOLDER / 'feature_importance.png'}")
+    plt.savefig(args.output_folder / 'feature_importance.png')
+    print(f"\nFeature importance plot saved to {args.output_folder / 'feature_importance.png'}")
 
 
 if __name__ == '__main__':
