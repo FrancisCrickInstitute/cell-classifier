@@ -4,7 +4,7 @@ from pathlib import Path
 from bioio import BioImage
 from scipy import ndimage
 from scipy.ndimage import label
-from skimage import morphology, feature, measure
+from skimage import morphology, feature, measure, filters
 from skimage.segmentation import watershed
 from skimage.color import label2rgb
 from sklearn.ensemble import RandomForestClassifier
@@ -68,22 +68,22 @@ def load_image_channels(image_path):
         print(f"Error loading {image_path}: {e}")
         return None, None
 
-def segment_nuclei(dapi_image, threshold_percentile=75):
-    """Segment nuclei from DAPI channel using thresholding and morphological operations."""
-    # Normalize image to 0-1 range
-    dapi_norm = (dapi_image - dapi_image.min()) / (dapi_image.max() - dapi_image.min() + 1e-8)
-    
-    # Apply threshold based on percentile
-    threshold = np.percentile(dapi_norm, threshold_percentile)
-    binary = dapi_norm > threshold
-    
+def segment_nuclei(dapi_image, median_filter_size=3):
+    """Segment nuclei from DAPI channel using triangle thresholding and morphological operations."""
+    # Median filter to denoise while preserving edges
+    dapi_filtered = ndimage.median_filter(dapi_image, size=median_filter_size)
+
+    # Apply triangle threshold
+    threshold = filters.threshold_triangle(dapi_filtered)
+    binary = dapi_filtered > threshold
+
     # Remove small objects and fill holes
     binary = morphology.remove_small_objects(binary, min_size=50)
     binary = ndimage.binary_fill_holes(binary)
-    
+
     # Label connected components
     nuclei_labels, num_nuclei = label(binary)
-    print(f"    Found {num_nuclei} nuclei")
+    print(f"    Found {num_nuclei} nuclei (triangle threshold={threshold:.1f})")
 
     return nuclei_labels
 
