@@ -3,8 +3,9 @@ import pandas as pd
 from pathlib import Path
 from bioio import BioImage
 from scipy import ndimage
-from scipy.ndimage import label, watershed
+from scipy.ndimage import label
 from skimage import morphology, feature, measure
+from skimage.segmentation import watershed
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.model_selection import cross_val_score
 from sklearn.preprocessing import StandardScaler
