@@ -65,15 +65,23 @@ The script runs a linear pipeline over a folder of `.czi` files:
    `skimage.measure.regionprops`), nuclei/cells intensity stats, cells texture (Laplacian-based
    granularity, precomputed once per image), nuclei–cells correlation, and coefficient-of-variation
    features. Cells smaller than 10 px are dropped.
-6. **Aggregation** (`process_single_image`, `main`) — features from all cells across all images are
-   concatenated into one `pandas.DataFrame`, written to `results/cell_features.csv`, then used to
-   train/cross-validate a `RandomForestClassifier` predicting condition from the extracted
-   features (after `StandardScaler` normalization).
+6. **Aggregation** (`process_single_image`, `main`) — images are processed in parallel via
+   `concurrent.futures.ProcessPoolExecutor` (`--workers`, default `os.cpu_count()`); features from
+   all cells across all images are concatenated into one `pandas.DataFrame`, written to
+   `results/cell_features.csv`, then used to train/cross-validate a `RandomForestClassifier`
+   predicting condition from the extracted features (after `StandardScaler` normalization).
 
-Configuration (input/output/QC folders, channel indices, z-slice) is exposed via `argparse`
-CLI options (`parse_args`), with defaults matching the original hardcoded values. Thresholds and
-other algorithm parameters (e.g. `median_filter_size`, `gaussian_sigma`) remain function-default
-arguments, not CLI-configurable.
+Configuration (input/output/QC folders, channel indices, z-slice, worker count) is exposed via
+`argparse` CLI options (`parse_args`), with defaults matching the original hardcoded values.
+Thresholds and other algorithm parameters (e.g. `median_filter_size`, `gaussian_sigma`) remain
+function-default arguments, not CLI-configurable.
+
+Since each worker starts its own `bioio-bioformats` JVM instance (via `scyjava`), parallelism
+trades memory/startup cost for throughput — `--workers 1` restores fully sequential behavior. The
+per-cell progress bar inside `process_single_image` (`show_progress`) is only enabled when
+`--workers 1`, since multiple processes writing `tqdm` bars to the same terminal at once garbles
+the output; the outer per-image progress bar (in `main`) always runs single-process and stays
+clean regardless of worker count.
 
 ## Conventions worth preserving
 
