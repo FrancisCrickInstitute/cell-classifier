@@ -9,12 +9,14 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 from bioio import BioImage
-from skimage import morphology, measure, filters, io
+from csbdeep.utils import normalize as stardist_normalize
+from skimage import measure, filters, io
 from skimage.segmentation import watershed
 from sklearn.base import clone
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.model_selection import LeaveOneGroupOut, cross_val_score
 from sklearn.preprocessing import StandardScaler
+from stardist.models import StarDist2D
 from tqdm import tqdm
 
 warnings.filterwarnings('ignore')
@@ -102,23 +104,26 @@ def load_image_channels(image_path, nuclei_channel, cells_channel, z_slice):
         return None, None
 
 
-def segment_nuclei(nuclei_image, median_filter_size=2):
-    """Segment nuclei from the nuclei channel using Li's thresholding and morphological operations."""
-    # Median filter to denoise while preserving edges
-    footprint = np.ones((median_filter_size, median_filter_size), dtype=bool)
-    nuclei_filtered = filters.median(nuclei_image, footprint=footprint)
+_stardist_model = None
 
-    # Apply Li's threshold
-    threshold = filters.threshold_li(nuclei_filtered)
-    binary = nuclei_filtered > threshold
 
-    # Remove small objects (hole filling disabled below)
-    binary = morphology.remove_small_objects(binary, min_size=10)
-    # binary = morphology.remove_small_holes(binary, max_size=binary.size)
+def _get_stardist_model():
+    """Lazily load the pretrained StarDist2D model once per worker process and cache it,
+    since process_single_image runs inside a ProcessPoolExecutor worker that may handle
+    multiple images - reloading the model per image would be wasteful."""
+    global _stardist_model
+    if _stardist_model is None:
+        print("    Loading StarDist2D pretrained model...")
+        _stardist_model = StarDist2D.from_pretrained('2D_versatile_fluo')
+    return _stardist_model
 
-    # Label connected components
-    nuclei_labels, num_nuclei = measure.label(binary, connectivity=1, return_num=True)
-    print(f"    Found {num_nuclei} nuclei (Li threshold={threshold:.1f})")
+
+def segment_nuclei(nuclei_image):
+    """Segment nuclei from the nuclei channel using a pretrained StarDist2D model."""
+    model = _get_stardist_model()
+    nuclei_labels, _details = model.predict_instances(stardist_normalize(nuclei_image), verbose=False)
+    num_nuclei = nuclei_labels.max()
+    print(f"    Found {num_nuclei} nuclei (StarDist)")
 
     return nuclei_labels
 
