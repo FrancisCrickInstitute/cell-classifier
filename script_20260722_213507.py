@@ -1,4 +1,6 @@
 import argparse
+import concurrent.futures
+import os
 import time
 import warnings
 from pathlib import Path
@@ -25,7 +27,7 @@ def parse_args():
     )
     parser.add_argument(
         '--input-folder', type=Path,
-        default=Path('C:/Users/davej/Downloads/wetransfer_example-images_2026-07-21_1330/Images for Dave'),
+        default=Path('C:/Users/barryd/Downloads/wetransfer_example-images_2026-07-21_1330/Images for Dave'),
         help='Folder containing CZI files (default: %(default)s)'
     )
     parser.add_argument(
@@ -47,6 +49,10 @@ def parse_args():
     parser.add_argument(
         '--z-slice', type=int, default=0,
         help='Z-slice index to use (default: %(default)s)'
+    )
+    parser.add_argument(
+        '--workers', type=int, default=os.cpu_count(),
+        help='Number of images to process in parallel (default: %(default)s, i.e. all CPU cores)'
     )
 
     args = parser.parse_args()
@@ -210,8 +216,9 @@ def extract_morphological_features(cell_mask, nuclei_image, cells_image, cells_l
     return features_dict
 
 
-def process_single_image(image_path, nuclei_channel, cells_channel, z_slice, qc_folder):
+def process_single_image(image_path, nuclei_channel, cells_channel, z_slice, qc_folder, show_progress=True):
     """Process a single CZI image and extract features for all cells."""
+    print(f"Processing {image_path.name}...")
     condition = extract_condition_from_filename(image_path.name)
     if condition is None:
         print(f"Warning: Could not determine condition for {image_path.name}")
@@ -242,7 +249,8 @@ def process_single_image(image_path, nuclei_channel, cells_channel, z_slice, qc_
     non_bg_labels = unique_labels[unique_labels != 0]
     first_label = non_bg_labels[0] if len(non_bg_labels) else None
 
-    for cell_label in tqdm(unique_labels, desc=f"  Extracting features ({image_path.name})", unit="cell"):
+    for cell_label in tqdm(unique_labels, desc=f"  Extracting features ({image_path.name})", unit="cell",
+                           disable=not show_progress):
         if cell_label == 0:  # Skip background
             continue
 
@@ -282,17 +290,33 @@ def main():
         return
 
     print(f"Found {len(czi_files)} CZI files")
+    print(f"Using {args.workers} worker process(es)")
 
-    # Process all images and collect features
+    # Process all images in parallel and collect features. Each worker gets its own
+    # BioImage/Bioformats JVM instance, so per-cell progress bars are disabled when
+    # running with more than one worker to avoid multiple processes fighting over the
+    # same terminal line; the outer per-image progress bar remains single-process.
+    show_progress = args.workers == 1
     all_features = []
-    for image_path in czi_files:
-        print(f"Processing {image_path.name}...")
-        image_features = process_single_image(
-            image_path, args.nuclei_channel, args.cells_channel, args.z_slice, args.qc_folder
-        )
-        if image_features is not None:
-            all_features.append(image_features)
-            print(f"  Extracted features from {len(image_features)} cells")
+    with concurrent.futures.ProcessPoolExecutor(max_workers=args.workers) as executor:
+        futures = {
+            executor.submit(
+                process_single_image, image_path, args.nuclei_channel, args.cells_channel,
+                args.z_slice, args.qc_folder, show_progress
+            ): image_path
+            for image_path in czi_files
+        }
+        for future in tqdm(concurrent.futures.as_completed(futures), total=len(futures),
+                            desc="Processing images", unit="image"):
+            image_path = futures[future]
+            try:
+                image_features = future.result()
+            except Exception as exc:
+                print(f"Error processing {image_path.name}: {exc}")
+                continue
+            if image_features is not None:
+                all_features.append(image_features)
+                print(f"  Extracted features from {len(image_features)} cells ({image_path.name})")
 
     if not all_features:
         print("No cells extracted from any images")
