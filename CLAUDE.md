@@ -6,10 +6,10 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 A cytoskeletal organization classifier for microscopy images. It segments cells from two-channel
 CZI images (a nuclear stain in the `nuclei` channel, e.g. DAPI, + a cytoskeletal stain in the
-`cells` channel, e.g. tubulin — see `NUCLEI_CHANNEL`/`CELLS_CHANNEL`), extracts per-cell
-morphological/intensity/texture features, and trains a Random Forest classifier to distinguish
-`doxpos` vs `doxneg` conditions (dox = doxycycline-inducible system), based on the condition label
-embedded in each filename.
+`cells` channel, e.g. tubulin — see the `--nuclei-channel`/`--cells-channel` CLI options), extracts
+per-cell morphological/intensity/texture features, and trains a Random Forest classifier to
+distinguish `doxpos` vs `doxneg` conditions (dox = doxycycline-inducible system), based on the
+condition label embedded in each filename.
 
 The codebase is currently a single script, `script_20260722_213507.py` (filename is an
 auto-generated timestamp, not meaningful). The `main()` pipeline runs end-to-end: discovery,
@@ -28,6 +28,9 @@ pixi install
 # run the pipeline script inside the pixi environment
 pixi run python script_20260722_213507.py
 
+# see all CLI options (input/output folders, channel indices, z-slice)
+pixi run python script_20260722_213507.py --help
+
 # or drop into an activated shell
 pixi shell -e cell-class
 ```
@@ -45,10 +48,10 @@ The script runs a linear pipeline over a folder of `.czi` files:
    inferred purely from substrings in the filename; files that match neither are skipped with a
    warning.
 2. **Channel loading** (`load_image_channels`) — uses `bioio.BioImage` to load a file, then indexes
-   into the nuclei and cells channels (`NUCLEI_CHANNEL = 0`, `CELLS_CHANNEL = 1`) at a single
-   z-slice (`Z_SLICE = 0`). Handles TCZYX and CZYX dimension orderings from `img.data`; any other
-   dimensionality (e.g. a bare ZYX single-channel image) is unsupported and logged/skipped rather
-   than guessed at.
+   into the nuclei and cells channels (`--nuclei-channel`, default 0; `--cells-channel`, default 1)
+   at a single z-slice (`--z-slice`, default 0). Handles TCZYX and CZYX dimension orderings from
+   `img.data`; any other dimensionality (e.g. a bare ZYX single-channel image) is unsupported and
+   logged/skipped rather than guessed at.
 3. **Nuclei segmentation** (`segment_nuclei`) — median filter denoise, Li's threshold
    (`filters.threshold_li`) on the nuclei channel, small-object removal, connected-component
    labeling (`skimage.measure.label`). Hole filling (`morphology.remove_small_holes`) is present in
@@ -67,8 +70,10 @@ The script runs a linear pipeline over a folder of `.czi` files:
    train/cross-validate a `RandomForestClassifier` predicting condition from the extracted
    features (after `StandardScaler` normalization).
 
-Configuration (input/output folders, channel indices, z-slice, thresholds) is set via module-level
-constants near the top of the script rather than CLI args or a config file.
+Configuration (input/output/QC folders, channel indices, z-slice) is exposed via `argparse`
+CLI options (`parse_args`), with defaults matching the original hardcoded values. Thresholds and
+other algorithm parameters (e.g. `median_filter_size`, `gaussian_sigma`) remain function-default
+arguments, not CLI-configurable.
 
 ## Conventions worth preserving
 
