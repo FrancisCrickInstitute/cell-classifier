@@ -67,18 +67,18 @@ def load_image_channels(image_path):
         print(f"Error loading {image_path}: {e}")
         return None, None
 
-def segment_nuclei(dapi_image, median_filter_size=3):
+def segment_nuclei(dapi_image, median_filter_size=2):
     """Segment nuclei from DAPI channel using triangle thresholding and morphological operations."""
     # Median filter to denoise while preserving edges
     dapi_filtered = ndimage.median_filter(dapi_image, size=median_filter_size)
 
     # Apply triangle threshold
-    threshold = filters.threshold_triangle(dapi_filtered)
+    threshold = filters.threshold_li(dapi_filtered)
     binary = dapi_filtered > threshold
 
     # Remove small objects and fill holes
-    binary = morphology.remove_small_objects(binary, min_size=50)
-    binary = ndimage.binary_fill_holes(binary)
+    binary = morphology.remove_small_objects(binary, min_size=10)
+    #binary = ndimage.binary_fill_holes(binary)
 
     # Label connected components
     nuclei_labels, num_nuclei = label(binary)
