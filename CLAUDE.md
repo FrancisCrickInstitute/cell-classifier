@@ -10,8 +10,9 @@ features, and trains a Random Forest classifier to distinguish `doxpos` vs `doxn
 (dox = doxycycline-inducible system), based on the condition label embedded in each filename.
 
 The codebase is currently a single script, `script_20260722_213507.py` (filename is an
-auto-generated timestamp, not meaningful). It is a work in progress — as of this writing the
-`main()` pipeline is incomplete, ending mid-way through the feature-importance reporting section.
+auto-generated timestamp, not meaningful). The `main()` pipeline runs end-to-end: discovery,
+segmentation, feature extraction, CSV export, Random Forest training/cross-validation, and
+feature-importance reporting (CSV + bar plot).
 
 ## Environment & running
 
@@ -43,9 +44,15 @@ The script runs a linear pipeline over a folder of `.czi` files:
    warning.
 2. **Channel loading** (`load_image_channels`) — uses `bioio.BioImage` to load a file, then indexes
    into the DAPI and tubulin channels (`DAPI_CHANNEL = 0`, `TUBULIN_CHANNEL = 1`) at a single
-   z-slice (`Z_SLICE = 0`). Handles TCZYX, CZYX, and ZYX dimension orderings from `img.data`.
-3. **Nuclei segmentation** (`segment_nuclei`) — percentile threshold on normalized DAPI intensity,
-   small-object removal, hole filling, connected-component labeling.
+   z-slice (`Z_SLICE = 0`). Handles TCZYX, CZYX, and ZYX dimension orderings from `img.data`. Note:
+   the ZYX (3D, single-channel-already-indexed) branch currently reads both DAPI and tubulin from
+   the same `img.get_image_data('ZYX')` call, so it does not actually separate channels — this path
+   is only correct if real inputs never hit it (expected CZI inputs are 4D/5D).
+3. **Nuclei segmentation** (`segment_nuclei`) — median filter denoise, Li's threshold
+   (`filters.threshold_li`) on the DAPI channel (the log message calls this "triangle threshold",
+   which is a naming leftover, not the actual method), small-object removal, connected-component
+   labeling. Hole filling (`ndimage.binary_fill_holes`) is present in the code but currently
+   commented out.
 4. **Cell segmentation** (`segment_cells`) — seeded watershed on the tubulin channel, using nuclei
    labels as markers and a distance transform as the elevation map.
 5. **Per-cell feature extraction** (`extract_morphological_features`) — for each labeled cell:
