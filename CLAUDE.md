@@ -62,9 +62,20 @@ The script runs a linear pipeline over a folder of `.czi` files:
    purely geometric distance from the foreground mask boundary.
 5. **Per-cell feature extraction** (`extract_morphological_features`) — for each labeled cell:
    shape features (area, perimeter, eccentricity, solidity, aspect ratio via
-   `skimage.measure.regionprops`), nuclei/cells intensity stats, cells texture (Laplacian-based
-   granularity, precomputed once per image), nuclei–cells correlation, and coefficient-of-variation
-   features. Cells smaller than 10 px are dropped.
+   `skimage.measure.regionprops`, unaffected by intensity normalization below), nuclei/cells
+   intensity stats, cells texture (Laplacian-based granularity, precomputed once per image),
+   nuclei–cells correlation, and coefficient-of-variation features. Cells smaller than 10 px are
+   dropped.
+
+   Before any intensity feature is computed, both channels are divided by `nuclei_reference` —
+   this cell's own mean nuclei-channel (DAPI) intensity — to correct for per-cell/per-image
+   illumination and staining-intensity differences. Known consequences of this: `nuclei_mean` is
+   now ≈1.0 for every cell (it's the reference itself) and is effectively uninformative;
+   `nuclei_cv` is now numerically ≈ `nuclei_std` (mean ≈1); and `cells_mean` (post-normalization)
+   is numerically identical to `cells_nuclei_ratio` (both equal raw `cells_mean / nuclei_mean`).
+   `nuclei_cells_correlation` is unaffected — Pearson correlation is invariant to positive scalar
+   rescaling. These are kept rather than pruned so the redundancy is visible in
+   `feature_importance.csv`/the plot; drop them there if they're not wanted.
 6. **Aggregation** (`process_single_image`, `main`) — images are processed in parallel via
    `concurrent.futures.ProcessPoolExecutor` (`--workers`, default `os.cpu_count()`); features from
    all cells across all images are concatenated into one `pandas.DataFrame`, written to
