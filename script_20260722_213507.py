@@ -87,18 +87,22 @@ def segment_nuclei(dapi_image, median_filter_size=3):
 
     return nuclei_labels
 
-def segment_cells(nuclei_labels, tubulin_image):
+def segment_cells(nuclei_labels, tubulin_image, gaussian_sigma=2):
     """Segment cell boundaries using seeded watershed from nuclei."""
-    # Normalize tubulin image
-    tubulin_norm = (tubulin_image - tubulin_image.min()) / (tubulin_image.max() - tubulin_image.min() + 1e-8)
-    
+    # Gaussian smoothing to denoise while preserving cell-scale structure
+    tubulin_smoothed = ndimage.gaussian_filter(tubulin_image, sigma=gaussian_sigma)
+
+    # Apply triangle threshold to obtain foreground mask
+    threshold = filters.threshold_triangle(tubulin_smoothed)
+    mask = tubulin_smoothed > threshold
+
     # Create distance map for watershed
-    distance = ndimage.distance_transform_edt(tubulin_norm > np.percentile(tubulin_norm, 50))
-    
+    distance = ndimage.distance_transform_edt(mask)
+
     # Apply watershed seeded by nuclei
-    cell_labels = watershed(-distance, markers=nuclei_labels, mask=(tubulin_norm > np.percentile(tubulin_norm, 30)))
+    cell_labels = watershed(-distance, markers=nuclei_labels, mask=mask)
     num_cells = len(np.unique(cell_labels)) - (1 if 0 in cell_labels else 0)
-    print(f"    Segmented {num_cells} cells")
+    print(f"    Segmented {num_cells} cells (triangle threshold={threshold:.1f})")
 
     return cell_labels
 
