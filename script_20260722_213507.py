@@ -10,6 +10,7 @@ from sklearn.ensemble import RandomForestClassifier
 from sklearn.model_selection import cross_val_score
 from sklearn.preprocessing import StandardScaler
 import matplotlib.pyplot as plt
+from tqdm import tqdm
 import warnings
 warnings.filterwarnings('ignore')
 
@@ -190,7 +191,7 @@ def process_single_image(image_path):
     unique_labels = np.unique(cell_labels)
     skipped = 0
 
-    for cell_label in unique_labels:
+    for cell_label in tqdm(unique_labels, desc=f"  Extracting features ({image_path.name})", unit="cell"):
         if cell_label == 0:  # Skip background
             continue
 
