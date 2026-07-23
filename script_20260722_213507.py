@@ -117,7 +117,8 @@ def save_segmentation_qc(image_path, nuclei_labels, cell_labels):
 
     print(f"    Saved label images: {nuclei_path.name}, {cell_path.name}")
 
-def extract_morphological_features(cell_mask, dapi_image, tubulin_image, cell_label, debug=False):
+def extract_morphological_features(cell_mask, dapi_image, tubulin_image, tubulin_local_var,
+                                    tubulin_laplacian, cell_label, debug=False):
     """Extract morphological and intensity features from a single cell."""
     t_start = time.perf_counter()
     features_dict = {}
@@ -153,15 +154,11 @@ def extract_morphological_features(cell_mask, dapi_image, tubulin_image, cell_la
     features_dict['tubulin_min'] = np.min(tubulin_values)
     t2 = time.perf_counter()
 
-    # Tubulin texture features (local variance as organization metric)
-    tubulin_local_var = ndimage.generic_filter(tubulin_image, np.var, size=5)
+    # Tubulin texture features (local variance as organization metric) and
+    # granularity (Laplacian) - both precomputed once per image by the caller
     features_dict['tubulin_texture_var'] = np.mean(tubulin_local_var[cell_region])
-    t3 = time.perf_counter()
-
-    # Granularity (using Laplacian)
-    tubulin_laplacian = ndimage.laplace(tubulin_image)
     features_dict['tubulin_granularity'] = np.mean(np.abs(tubulin_laplacian[cell_region]))
-    t4 = time.perf_counter()
+    t3 = time.perf_counter()
 
     # Intensity ratio and colocalization
     features_dict['tubulin_dapi_ratio'] = (features_dict['tubulin_mean'] / (features_dict['dapi_mean'] + 1e-8))
@@ -171,13 +168,12 @@ def extract_morphological_features(cell_mask, dapi_image, tubulin_image, cell_la
     # Spatial intensity distribution (coefficient of variation)
     features_dict['dapi_cv'] = features_dict['dapi_std'] / (features_dict['dapi_mean'] + 1e-8)
     features_dict['tubulin_cv'] = features_dict['tubulin_std'] / (features_dict['tubulin_mean'] + 1e-8)
-    t5 = time.perf_counter()
+    t4 = time.perf_counter()
 
     if debug:
         tqdm.write(
             f"    [debug cell {cell_label}] shape={t1 - t0:.3f}s intensity={t2 - t1:.3f}s "
-            f"texture_var(generic_filter)={t3 - t2:.3f}s laplacian={t4 - t3:.3f}s "
-            f"ratios={t5 - t4:.3f}s total={t5 - t_start:.3f}s"
+            f"texture_lookup={t3 - t2:.3f}s ratios={t4 - t3:.3f}s total={t4 - t_start:.3f}s"
         )
 
     return features_dict
@@ -201,6 +197,12 @@ def process_single_image(image_path):
     cell_labels = segment_cells(nuclei_labels, tubulin)
     save_segmentation_qc(image_path, nuclei_labels, cell_labels)
 
+    # Precompute whole-image texture maps once (previously recomputed per cell)
+    t0 = time.perf_counter()
+    tubulin_local_var = ndimage.generic_filter(tubulin, np.var, size=5)
+    tubulin_laplacian = ndimage.laplace(tubulin)
+    print(f"    Precomputed texture maps in {time.perf_counter() - t0:.2f}s")
+
     # Extract features for each cell
     cell_features_list = []
     unique_labels = np.unique(cell_labels)
@@ -214,7 +216,8 @@ def process_single_image(image_path):
             continue
 
         cell_features = extract_morphological_features(
-            cell_labels, dapi, tubulin, cell_label, debug=(cell_label == first_label)
+            cell_labels, dapi, tubulin, tubulin_local_var, tubulin_laplacian,
+            cell_label, debug=(cell_label == first_label)
         )
         if cell_features is not None:
             cell_features['condition'] = condition
