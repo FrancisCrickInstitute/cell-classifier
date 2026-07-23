@@ -188,8 +188,8 @@ def extract_morphological_features(cell_mask, nuclei_image, cells_image, cells_l
     nuclei_values = nuclei_image[cell_region] / nuclei_reference
     cells_values = cells_image[cell_region] / nuclei_reference
 
-    # Nuclei intensity features
-    features_dict['nuclei_mean'] = np.mean(nuclei_values)
+    # Nuclei intensity features (nuclei_mean is omitted: after normalization it is ~1.0 for
+    # every cell by construction, since it's the reference value itself)
     features_dict['nuclei_std'] = np.std(nuclei_values)
     features_dict['nuclei_max'] = np.max(nuclei_values)
     features_dict['nuclei_min'] = np.min(nuclei_values)
@@ -207,14 +207,14 @@ def extract_morphological_features(cell_mask, nuclei_image, cells_image, cells_l
     features_dict['cells_granularity'] = np.mean(np.abs(cells_laplacian[cell_region])) / nuclei_reference
     t3 = time.perf_counter()
 
-    # Intensity ratio and colocalization
-    features_dict['cells_nuclei_ratio'] = (features_dict['cells_mean'] / (features_dict['nuclei_mean'] + 1e-8))
+    # Colocalization (cells_nuclei_ratio is omitted: post-normalization, cells_mean is already
+    # numerically identical to raw cells_mean / nuclei_mean)
     nuclei_cells_correlation = np.corrcoef(nuclei_values, cells_values)[0, 1]
     features_dict['nuclei_cells_correlation'] = nuclei_cells_correlation if not np.isnan(
         nuclei_cells_correlation) else 0
 
-    # Spatial intensity distribution (coefficient of variation)
-    features_dict['nuclei_cv'] = features_dict['nuclei_std'] / (features_dict['nuclei_mean'] + 1e-8)
+    # Spatial intensity distribution (coefficient of variation). nuclei_cv is omitted: with
+    # nuclei_mean ~= 1.0, it would be numerically ~= nuclei_std.
     features_dict['cells_cv'] = features_dict['cells_std'] / (features_dict['cells_mean'] + 1e-8)
     t4 = time.perf_counter()
 
