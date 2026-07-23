@@ -89,6 +89,14 @@ The script runs a linear pipeline over a folder of `.czi` files:
    signal on its own with only a handful of images (e.g. one image scoring far below the rest is
    worth investigating before trusting the aggregate number).
 
+   Before that, `run_image_identity_diagnostic` runs a sanity-check classifier that predicts
+   *which image* a cell came from (multi-class over `image_file`, not `condition`), evaluated
+   with an ordinary cell-level `cross_val_score` (leave-one-image-out doesn't apply here — holding
+   out an image would remove all training examples of the label being predicted). High accuracy
+   here (well above `1/n_images` chance) means the feature space is dominated by per-image
+   technical signatures rather than biology, which explains why the condition classifier fails to
+   generalize under leave-one-image-out.
+
 Configuration (input/output/QC folders, channel indices, z-slice, worker count) is exposed via
 `argparse` CLI options (`parse_args`), with defaults matching the original hardcoded values.
 Thresholds and other algorithm parameters (e.g. `median_filter_size`, `gaussian_sigma`) remain
