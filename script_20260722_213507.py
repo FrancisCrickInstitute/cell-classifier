@@ -71,22 +71,22 @@ def load_image_channels(image_path):
 
 
 def segment_nuclei(dapi_image, median_filter_size=2):
-    """Segment nuclei from DAPI channel using triangle thresholding and morphological operations."""
+    """Segment nuclei from DAPI channel using Li's thresholding and morphological operations."""
     # Median filter to denoise while preserving edges
     footprint = np.ones((median_filter_size, median_filter_size), dtype=bool)
     dapi_filtered = filters.median(dapi_image, footprint=footprint)
 
-    # Apply triangle threshold
+    # Apply Li's threshold
     threshold = filters.threshold_li(dapi_filtered)
     binary = dapi_filtered > threshold
 
-    # Remove small objects and fill holes
+    # Remove small objects (hole filling disabled below)
     binary = morphology.remove_small_objects(binary, min_size=10)
     # binary = morphology.remove_small_holes(binary, max_size=binary.size)
 
     # Label connected components
     nuclei_labels, num_nuclei = measure.label(binary, connectivity=1, return_num=True)
-    print(f"    Found {num_nuclei} nuclei (triangle threshold={threshold:.1f})")
+    print(f"    Found {num_nuclei} nuclei (Li threshold={threshold:.1f})")
 
     return nuclei_labels
 
