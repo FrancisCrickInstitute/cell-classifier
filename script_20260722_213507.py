@@ -2,7 +2,6 @@ import numpy as np
 import pandas as pd
 from pathlib import Path
 from bioio import BioImage
-from scipy.ndimage import distance_transform_edt
 from skimage import morphology, feature, measure, filters, io
 from skimage.segmentation import watershed
 from sklearn.ensemble import RandomForestClassifier
@@ -94,11 +93,13 @@ def segment_cells(nuclei_labels, tubulin_image, gaussian_sigma=2):
     threshold = filters.threshold_triangle(tubulin_smoothed)
     mask = tubulin_smoothed > threshold
 
-    # Create distance map for watershed
-    distance = distance_transform_edt(mask)
+    # Elevation map for watershed: gradient of the smoothed tubulin signal, so
+    # flooding stops at intensity edges between cells rather than at a purely
+    # geometric distance from the mask boundary
+    elevation = filters.sobel(tubulin_smoothed)
 
     # Apply watershed seeded by nuclei
-    cell_labels = watershed(-distance, markers=nuclei_labels, mask=mask)
+    cell_labels = watershed(elevation, markers=nuclei_labels, mask=mask)
     num_cells = len(np.unique(cell_labels)) - (1 if 0 in cell_labels else 0)
     print(f"    Segmented {num_cells} cells (triangle threshold={threshold:.1f})")
 
