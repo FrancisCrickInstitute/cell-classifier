@@ -1,20 +1,23 @@
+import time
+import warnings
+from pathlib import Path
+
+import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
-from pathlib import Path
 from bioio import BioImage
-from skimage import morphology, feature, measure, filters, io
+from skimage import morphology, measure, filters, io
 from skimage.segmentation import watershed
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.model_selection import cross_val_score
 from sklearn.preprocessing import StandardScaler
-import matplotlib.pyplot as plt
 from tqdm import tqdm
-import time
-import warnings
+
 warnings.filterwarnings('ignore')
 
 # Configuration parameters
-INPUT_FOLDER = Path('C:/Users/davej/Downloads/wetransfer_example-images_2026-07-21_1330/Images for Dave')  # Folder containing CZI files
+INPUT_FOLDER = Path(
+    'C:/Users/davej/Downloads/wetransfer_example-images_2026-07-21_1330/Images for Dave')  # Folder containing CZI files
 OUTPUT_FOLDER = Path('./results')
 QC_FOLDER = OUTPUT_FOLDER / 'segmentation_qc'
 
@@ -26,6 +29,7 @@ Z_SLICE = 0  # Use first z-slice only
 OUTPUT_FOLDER.mkdir(exist_ok=True)
 QC_FOLDER.mkdir(exist_ok=True)
 
+
 def extract_condition_from_filename(filename):
     """Extract condition (doxneg or doxpos) from filename."""
     filename_lower = filename.lower()
@@ -36,14 +40,15 @@ def extract_condition_from_filename(filename):
     else:
         return None
 
+
 def load_image_channels(image_path):
     """Load CZI image and extract DAPI and tubulin channels from first z-slice."""
     try:
         img = BioImage(str(image_path))
-        
+
         # Get data shape and extract first z-slice
         data = img.data
-        
+
         print(f"    Image shape: {data.shape} (dims: {img.dims.order})")
 
         # Handle different possible dimension orders
@@ -64,6 +69,7 @@ def load_image_channels(image_path):
         print(f"Error loading {image_path}: {e}")
         return None, None
 
+
 def segment_nuclei(dapi_image, median_filter_size=2):
     """Segment nuclei from DAPI channel using triangle thresholding and morphological operations."""
     # Median filter to denoise while preserving edges
@@ -76,13 +82,14 @@ def segment_nuclei(dapi_image, median_filter_size=2):
 
     # Remove small objects and fill holes
     binary = morphology.remove_small_objects(binary, min_size=10)
-    #binary = morphology.remove_small_holes(binary, max_size=binary.size)
+    # binary = morphology.remove_small_holes(binary, max_size=binary.size)
 
     # Label connected components
     nuclei_labels, num_nuclei = measure.label(binary, connectivity=1, return_num=True)
     print(f"    Found {num_nuclei} nuclei (triangle threshold={threshold:.1f})")
 
     return nuclei_labels
+
 
 def segment_cells(nuclei_labels, tubulin_image, gaussian_sigma=2):
     """Segment cell boundaries using seeded watershed from nuclei."""
@@ -105,6 +112,7 @@ def segment_cells(nuclei_labels, tubulin_image, gaussian_sigma=2):
 
     return cell_labels
 
+
 def save_segmentation_qc(image_path, nuclei_labels, cell_labels):
     """Save raw nuclei and cell label images as PNGs for visual QC."""
     nuclei_path = QC_FOLDER / f'{image_path.stem}_nuclei_labels.png'
@@ -115,8 +123,9 @@ def save_segmentation_qc(image_path, nuclei_labels, cell_labels):
 
     print(f"    Saved label images: {nuclei_path.name}, {cell_path.name}")
 
+
 def extract_morphological_features(cell_mask, dapi_image, tubulin_image, tubulin_laplacian,
-                                    cell_label, debug=False):
+                                   cell_label, debug=False):
     """Extract morphological and intensity features from a single cell."""
     t_start = time.perf_counter()
     features_dict = {}
@@ -159,7 +168,8 @@ def extract_morphological_features(cell_mask, dapi_image, tubulin_image, tubulin
     # Intensity ratio and colocalization
     features_dict['tubulin_dapi_ratio'] = (features_dict['tubulin_mean'] / (features_dict['dapi_mean'] + 1e-8))
     dapi_tubulin_correlation = np.corrcoef(dapi_values, tubulin_values)[0, 1]
-    features_dict['dapi_tubulin_correlation'] = dapi_tubulin_correlation if not np.isnan(dapi_tubulin_correlation) else 0
+    features_dict['dapi_tubulin_correlation'] = dapi_tubulin_correlation if not np.isnan(
+        dapi_tubulin_correlation) else 0
 
     # Spatial intensity distribution (coefficient of variation)
     features_dict['dapi_cv'] = features_dict['dapi_std'] / (features_dict['dapi_mean'] + 1e-8)
@@ -173,6 +183,7 @@ def extract_morphological_features(cell_mask, dapi_image, tubulin_image, tubulin
         )
 
     return features_dict
+
 
 def process_single_image(image_path):
     """Process a single CZI image and extract features for all cells."""
@@ -228,6 +239,7 @@ def process_single_image(image_path):
     else:
         return None
 
+
 def main():
     """Main analysis pipeline."""
     print("Starting cytoskeletal organization classifier analysis...")
@@ -239,9 +251,9 @@ def main():
     if not czi_files:
         print(f"No CZI files found in {INPUT_FOLDER}")
         return
-    
+
     print(f"Found {len(czi_files)} CZI files")
-    
+
     # Process all images and collect features
     all_features = []
     for image_path in czi_files:
@@ -250,39 +262,39 @@ def main():
         if image_features is not None:
             all_features.append(image_features)
             print(f"  Extracted features from {len(image_features)} cells")
-    
+
     if not all_features:
         print("No cells extracted from any images")
         return
-    
+
     # Combine all features into single DataFrame
     features_df = pd.concat(all_features, ignore_index=True)
     print(f"\nTotal cells processed: {len(features_df)}")
     print(f"Condition distribution:\n{features_df['condition'].value_counts()}")
-    
+
     # Save raw features
     features_df.to_csv(OUTPUT_FOLDER / 'cell_features.csv', index=False)
     print(f"\nRaw features saved to {OUTPUT_FOLDER / 'cell_features.csv'}")
-    
+
     # Prepare data for classification
     feature_columns = [col for col in features_df.columns if col not in ['condition', 'image_file']]
     X = features_df[feature_columns].values
     y = (features_df['condition'] == 'doxpos').astype(int).values
-    
+
     # Handle any NaN or inf values
     X = np.nan_to_num(X, nan=0, posinf=0, neginf=0)
-    
+
     # Standardize features
     scaler = StandardScaler()
     X_scaled = scaler.fit_transform(X)
-    
+
     # Train Random Forest classifier with cross-validation
     print("\nTraining Random Forest classifier...")
     clf = RandomForestClassifier(n_estimators=100, random_state=42, max_depth=10, min_samples_split=5)
     cv_scores = cross_val_score(clf, X_scaled, y, cv=5, scoring='accuracy')
-    
+
     print(f"Cross-validation accuracy: {cv_scores.mean():.3f} (+/- {cv_scores.std():.3f})")
-    
+
     # Train final model on all data
     clf.fit(X_scaled, y)
 
