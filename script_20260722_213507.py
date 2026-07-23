@@ -21,8 +21,8 @@ INPUT_FOLDER = Path(
 OUTPUT_FOLDER = Path('./results')
 QC_FOLDER = OUTPUT_FOLDER / 'segmentation_qc'
 
-DAPI_CHANNEL = 0
-TUBULIN_CHANNEL = 1
+NUCLEI_CHANNEL = 0
+CELLS_CHANNEL = 1
 Z_SLICE = 0  # Use first z-slice only
 
 # Create output folders
@@ -42,7 +42,7 @@ def extract_condition_from_filename(filename):
 
 
 def load_image_channels(image_path):
-    """Load CZI image and extract DAPI and tubulin channels from first z-slice."""
+    """Load CZI image and extract nuclei and cells channels from first z-slice."""
     try:
         img = BioImage(str(image_path))
 
@@ -53,32 +53,32 @@ def load_image_channels(image_path):
 
         # Handle different possible dimension orders
         if len(data.shape) == 5:  # TCZYX
-            dapi = data[0, DAPI_CHANNEL, Z_SLICE, :, :].astype(np.float32)
-            tubulin = data[0, TUBULIN_CHANNEL, Z_SLICE, :, :].astype(np.float32)
+            nuclei = data[0, NUCLEI_CHANNEL, Z_SLICE, :, :].astype(np.float32)
+            cells = data[0, CELLS_CHANNEL, Z_SLICE, :, :].astype(np.float32)
         elif len(data.shape) == 4:  # CZYX
-            dapi = data[DAPI_CHANNEL, Z_SLICE, :, :].astype(np.float32)
-            tubulin = data[TUBULIN_CHANNEL, Z_SLICE, :, :].astype(np.float32)
+            nuclei = data[NUCLEI_CHANNEL, Z_SLICE, :, :].astype(np.float32)
+            cells = data[CELLS_CHANNEL, Z_SLICE, :, :].astype(np.float32)
         else:
             print(f"    Unsupported dimensionality: {len(data.shape)}D")
             return None, None
 
-        print(f"    DAPI range: [{dapi.min():.1f}, {dapi.max():.1f}], "
-              f"Tubulin range: [{tubulin.min():.1f}, {tubulin.max():.1f}]")
-        return dapi, tubulin
+        print(f"    Nuclei range: [{nuclei.min():.1f}, {nuclei.max():.1f}], "
+              f"Cells range: [{cells.min():.1f}, {cells.max():.1f}]")
+        return nuclei, cells
     except Exception as e:
         print(f"Error loading {image_path}: {e}")
         return None, None
 
 
-def segment_nuclei(dapi_image, median_filter_size=2):
-    """Segment nuclei from DAPI channel using Li's thresholding and morphological operations."""
+def segment_nuclei(nuclei_image, median_filter_size=2):
+    """Segment nuclei from the nuclei channel using Li's thresholding and morphological operations."""
     # Median filter to denoise while preserving edges
     footprint = np.ones((median_filter_size, median_filter_size), dtype=bool)
-    dapi_filtered = filters.median(dapi_image, footprint=footprint)
+    nuclei_filtered = filters.median(nuclei_image, footprint=footprint)
 
     # Apply Li's threshold
-    threshold = filters.threshold_li(dapi_filtered)
-    binary = dapi_filtered > threshold
+    threshold = filters.threshold_li(nuclei_filtered)
+    binary = nuclei_filtered > threshold
 
     # Remove small objects (hole filling disabled below)
     binary = morphology.remove_small_objects(binary, min_size=10)
@@ -91,19 +91,19 @@ def segment_nuclei(dapi_image, median_filter_size=2):
     return nuclei_labels
 
 
-def segment_cells(nuclei_labels, tubulin_image, gaussian_sigma=2):
+def segment_cells(nuclei_labels, cells_image, gaussian_sigma=2):
     """Segment cell boundaries using seeded watershed from nuclei."""
     # Gaussian smoothing to denoise while preserving cell-scale structure
-    tubulin_smoothed = filters.gaussian(tubulin_image, sigma=gaussian_sigma, preserve_range=True)
+    cells_smoothed = filters.gaussian(cells_image, sigma=gaussian_sigma, preserve_range=True)
 
     # Apply triangle threshold to obtain foreground mask
-    threshold = filters.threshold_triangle(tubulin_smoothed)
-    mask = tubulin_smoothed > threshold
+    threshold = filters.threshold_triangle(cells_smoothed)
+    mask = cells_smoothed > threshold
 
-    # Elevation map for watershed: gradient of the smoothed tubulin signal, so
+    # Elevation map for watershed: gradient of the smoothed cells signal, so
     # flooding stops at intensity edges between cells rather than at a purely
     # geometric distance from the mask boundary
-    elevation = filters.sobel(tubulin_smoothed)
+    elevation = filters.sobel(cells_smoothed)
 
     # Apply watershed seeded by nuclei
     cell_labels = watershed(elevation, markers=nuclei_labels, mask=mask)
@@ -124,7 +124,7 @@ def save_segmentation_qc(image_path, nuclei_labels, cell_labels):
     print(f"    Saved label images: {nuclei_path.name}, {cell_path.name}")
 
 
-def extract_morphological_features(cell_mask, dapi_image, tubulin_image, tubulin_laplacian,
+def extract_morphological_features(cell_mask, nuclei_image, cells_image, cells_laplacian,
                                    cell_label, debug=False):
     """Extract morphological and intensity features from a single cell."""
     t_start = time.perf_counter()
@@ -146,34 +146,34 @@ def extract_morphological_features(cell_mask, dapi_image, tubulin_image, tubulin
     features_dict['aspect_ratio'] = region_props.major_axis_length / (region_props.minor_axis_length + 1e-8)
     t1 = time.perf_counter()
 
-    # DAPI intensity features
-    dapi_values = dapi_image[cell_region]
-    features_dict['dapi_mean'] = np.mean(dapi_values)
-    features_dict['dapi_std'] = np.std(dapi_values)
-    features_dict['dapi_max'] = np.max(dapi_values)
-    features_dict['dapi_min'] = np.min(dapi_values)
+    # Nuclei intensity features
+    nuclei_values = nuclei_image[cell_region]
+    features_dict['nuclei_mean'] = np.mean(nuclei_values)
+    features_dict['nuclei_std'] = np.std(nuclei_values)
+    features_dict['nuclei_max'] = np.max(nuclei_values)
+    features_dict['nuclei_min'] = np.min(nuclei_values)
 
-    # Tubulin intensity features
-    tubulin_values = tubulin_image[cell_region]
-    features_dict['tubulin_mean'] = np.mean(tubulin_values)
-    features_dict['tubulin_std'] = np.std(tubulin_values)
-    features_dict['tubulin_max'] = np.max(tubulin_values)
-    features_dict['tubulin_min'] = np.min(tubulin_values)
+    # Cells intensity features
+    cells_values = cells_image[cell_region]
+    features_dict['cells_mean'] = np.mean(cells_values)
+    features_dict['cells_std'] = np.std(cells_values)
+    features_dict['cells_max'] = np.max(cells_values)
+    features_dict['cells_min'] = np.min(cells_values)
     t2 = time.perf_counter()
 
     # Granularity (Laplacian) - precomputed once per image by the caller
-    features_dict['tubulin_granularity'] = np.mean(np.abs(tubulin_laplacian[cell_region]))
+    features_dict['cells_granularity'] = np.mean(np.abs(cells_laplacian[cell_region]))
     t3 = time.perf_counter()
 
     # Intensity ratio and colocalization
-    features_dict['tubulin_dapi_ratio'] = (features_dict['tubulin_mean'] / (features_dict['dapi_mean'] + 1e-8))
-    dapi_tubulin_correlation = np.corrcoef(dapi_values, tubulin_values)[0, 1]
-    features_dict['dapi_tubulin_correlation'] = dapi_tubulin_correlation if not np.isnan(
-        dapi_tubulin_correlation) else 0
+    features_dict['cells_nuclei_ratio'] = (features_dict['cells_mean'] / (features_dict['nuclei_mean'] + 1e-8))
+    nuclei_cells_correlation = np.corrcoef(nuclei_values, cells_values)[0, 1]
+    features_dict['nuclei_cells_correlation'] = nuclei_cells_correlation if not np.isnan(
+        nuclei_cells_correlation) else 0
 
     # Spatial intensity distribution (coefficient of variation)
-    features_dict['dapi_cv'] = features_dict['dapi_std'] / (features_dict['dapi_mean'] + 1e-8)
-    features_dict['tubulin_cv'] = features_dict['tubulin_std'] / (features_dict['tubulin_mean'] + 1e-8)
+    features_dict['nuclei_cv'] = features_dict['nuclei_std'] / (features_dict['nuclei_mean'] + 1e-8)
+    features_dict['cells_cv'] = features_dict['cells_std'] / (features_dict['cells_mean'] + 1e-8)
     t4 = time.perf_counter()
 
     if debug:
@@ -194,19 +194,19 @@ def process_single_image(image_path):
     print(f"  Condition: {condition}")
 
     # Load channels
-    dapi, tubulin = load_image_channels(image_path)
-    if dapi is None or tubulin is None:
+    nuclei, cells = load_image_channels(image_path)
+    if nuclei is None or cells is None:
         print(f"Warning: Failed to load image {image_path.name}")
         return None
 
     # Segment nuclei and cells
-    nuclei_labels = segment_nuclei(dapi)
-    cell_labels = segment_cells(nuclei_labels, tubulin)
+    nuclei_labels = segment_nuclei(nuclei)
+    cell_labels = segment_cells(nuclei_labels, cells)
     save_segmentation_qc(image_path, nuclei_labels, cell_labels)
 
     # Precompute whole-image granularity map once (previously recomputed per cell)
     t0 = time.perf_counter()
-    tubulin_laplacian = filters.laplace(tubulin)
+    cells_laplacian = filters.laplace(cells)
     print(f"    Precomputed granularity map in {time.perf_counter() - t0:.2f}s")
 
     # Extract features for each cell
@@ -222,7 +222,7 @@ def process_single_image(image_path):
             continue
 
         cell_features = extract_morphological_features(
-            cell_labels, dapi, tubulin, tubulin_laplacian,
+            cell_labels, nuclei, cells, cells_laplacian,
             cell_label, debug=(cell_label == first_label)
         )
         if cell_features is not None:
