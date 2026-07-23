@@ -80,6 +80,14 @@ The script runs a linear pipeline over a folder of `.czi` files:
    all cells across all images are concatenated into one `pandas.DataFrame`, written to
    `results/cell_features.csv`, then used to train/cross-validate a `RandomForestClassifier`
    predicting condition from the extracted features (after `StandardScaler` normalization).
+   Cross-validation uses `sklearn.model_selection.LeaveOneGroupOut` grouped by `image_file` (one
+   fold per image, manually looped with `sklearn.base.clone` so each fold gets a fresh untrained
+   classifier) rather than a plain K-fold split — cells from the same image are not independent
+   samples (they share illumination/staining/segmentation-threshold batch effects), so a
+   cell-level split would leak every image into every fold and inflate the accuracy estimate.
+   Per-fold accuracy is printed with the held-out image's filename, which is useful diagnostic
+   signal on its own with only a handful of images (e.g. one image scoring far below the rest is
+   worth investigating before trusting the aggregate number).
 
 Configuration (input/output/QC folders, channel indices, z-slice, worker count) is exposed via
 `argparse` CLI options (`parse_args`), with defaults matching the original hardcoded values.
