@@ -55,9 +55,6 @@ def load_image_channels(image_path):
         elif len(data.shape) == 4:  # CZYX
             dapi = data[DAPI_CHANNEL, Z_SLICE, :, :].astype(np.float32)
             tubulin = data[TUBULIN_CHANNEL, Z_SLICE, :, :].astype(np.float32)
-        elif len(data.shape) == 3:  # ZYX
-            dapi = img.get_image_data('ZYX')[Z_SLICE, :, :].astype(np.float32)
-            tubulin = img.get_image_data('ZYX')[Z_SLICE, :, :].astype(np.float32)
         else:
             print(f"    Unsupported dimensionality: {len(data.shape)}D")
             return None, None
