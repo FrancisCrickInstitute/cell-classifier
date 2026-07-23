@@ -43,6 +43,8 @@ def load_image_channels(image_path):
         # Get data shape and extract first z-slice
         data = img.data
         
+        print(f"    Image shape: {data.shape} (dims: {img.dims.order})")
+
         # Handle different possible dimension orders
         if len(data.shape) == 5:  # TCZYX
             dapi = data[0, DAPI_CHANNEL, Z_SLICE, :, :].astype(np.float32)
@@ -54,8 +56,11 @@ def load_image_channels(image_path):
             dapi = img.get_image_data('ZYX')[Z_SLICE, :, :].astype(np.float32)
             tubulin = img.get_image_data('ZYX')[Z_SLICE, :, :].astype(np.float32)
         else:
+            print(f"    Unsupported dimensionality: {len(data.shape)}D")
             return None, None
-            
+
+        print(f"    DAPI range: [{dapi.min():.1f}, {dapi.max():.1f}], "
+              f"Tubulin range: [{tubulin.min():.1f}, {tubulin.max():.1f}]")
         return dapi, tubulin
     except Exception as e:
         print(f"Error loading {image_path}: {e}")
@@ -75,8 +80,9 @@ def segment_nuclei(dapi_image, threshold_percentile=75):
     binary = ndimage.binary_fill_holes(binary)
     
     # Label connected components
-    nuclei_labels, _ = label(binary)
-    
+    nuclei_labels, num_nuclei = label(binary)
+    print(f"    Found {num_nuclei} nuclei")
+
     return nuclei_labels
 
 def segment_cells(nuclei_labels, tubulin_image):
@@ -89,7 +95,9 @@ def segment_cells(nuclei_labels, tubulin_image):
     
     # Apply watershed seeded by nuclei
     cell_labels = watershed(-distance, markers=nuclei_labels, mask=(tubulin_norm > np.percentile(tubulin_norm, 30)))
-    
+    num_cells = len(np.unique(cell_labels)) - (1 if 0 in cell_labels else 0)
+    print(f"    Segmented {num_cells} cells")
+
     return cell_labels
 
 def extract_morphological_features(cell_mask, dapi_image, tubulin_image, cell_label):
@@ -149,31 +157,37 @@ def process_single_image(image_path):
     if condition is None:
         print(f"Warning: Could not determine condition for {image_path.name}")
         return None
-    
+    print(f"  Condition: {condition}")
+
     # Load channels
     dapi, tubulin = load_image_channels(image_path)
     if dapi is None or tubulin is None:
         print(f"Warning: Failed to load image {image_path.name}")
         return None
-    
+
     # Segment nuclei and cells
     nuclei_labels = segment_nuclei(dapi)
     cell_labels = segment_cells(nuclei_labels, tubulin)
-    
+
     # Extract features for each cell
     cell_features_list = []
     unique_labels = np.unique(cell_labels)
-    
+    skipped = 0
+
     for cell_label in unique_labels:
         if cell_label == 0:  # Skip background
             continue
-        
+
         cell_features = extract_morphological_features(cell_labels, dapi, tubulin, cell_label)
         if cell_features is not None:
             cell_features['condition'] = condition
             cell_features['image_file'] = image_path.name
             cell_features_list.append(cell_features)
-    
+        else:
+            skipped += 1
+
+    print(f"    Kept {len(cell_features_list)} cells, skipped {skipped} (too small)")
+
     if cell_features_list:
         return pd.DataFrame(cell_features_list)
     else:
@@ -182,7 +196,9 @@ def process_single_image(image_path):
 def main():
     """Main analysis pipeline."""
     print("Starting cytoskeletal organization classifier analysis...")
-    
+    print(f"Input folder: {INPUT_FOLDER.resolve()}")
+    print(f"Output folder: {OUTPUT_FOLDER.resolve()}")
+
     # Find all CZI files
     czi_files = list(INPUT_FOLDER.glob('*.czi'))
     if not czi_files:
